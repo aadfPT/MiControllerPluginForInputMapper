@@ -5,32 +5,35 @@ using System.Text;
 using System.Threading.Tasks;
 using ODIF;
 using ODIF.Extensions;
-using SlimDX;
-using SlimDX.XInput;
+//using SlimDX;
+//using SlimDX.XInput;
 using System.Threading;
 using System.Management;
 using System.Reflection;
-using SlimDX.DirectInput;
+using Mighty.HID;
+
+//using SlimDX.DirectInput;
+//using SlimDX.Multimedia;
+//using SlimDX.RawInput;
+//using Device = SlimDX.RawInput.Device;
+//using DeviceFlags = SlimDX.RawInput.DeviceFlags;
+//using DeviceType = SlimDX.RawInput.DeviceType;
+
 //using DeviceSubtype = SlimDX.XInput.DeviceSubtype;
 
 namespace _Mi_Controller_Input
 {
     [PluginInfo(
-        PluginName = "Mi Controller Input",
+        PluginName = "Mi Controller",
         PluginDescription = "Adds support for the Mi Controller",
         PluginID = 999,
         PluginAuthorName = "André Ferreira",
         PluginAuthorEmail = "aadf.pt [at] gmail [dot] com",
         PluginAuthorURL = "https://github.com/aadfPT",
-        PluginIconPath = @"pack://application:,,,/360 Controller Input;component/Resources/360_Guide.png"
+        PluginIconPath = @"pack://application:,,,/Mi Controller;component/Resources/360_Guide.png"
     )]
     public class MiControllerPlugin : InputDevicePlugin
     {
-        private readonly DirectInput _directInput = new DirectInput();
-
-        //private Joystick gamepad;
-        //private JoystickState state;
-
         public MiControllerPlugin()
         {
             Global.HardwareChangeDetected += CheckForControllersEvent;
@@ -44,20 +47,19 @@ namespace _Mi_Controller_Input
         {
             lock (base.Devices)
             {
-                var deviceInstances = new List<DeviceInstance>();
-                deviceInstances.AddRange(this._directInput.GetDevices(DeviceClass.GameController, DeviceEnumerationFlags.AttachedOnly));
-                foreach (var deviceInstance in deviceInstances)
+                var compatibleDevices = HIDBrowse.Browse().Where(d => d.Vid.ToString("X4") == "2717" && d.Pid.ToString("X4") == "3144").ToList();
+                foreach (var deviceInstance in compatibleDevices)
                 {
-                    if (Devices.Any(d => ((myMiDevice)d).Device.InstanceGuid == deviceInstance.InstanceGuid))
+                    if (Devices.Any(d => ((myMiDevice)d).DeviceInfo.Path == deviceInstance.Path))
                     {
                         continue;
                     }
-                    Devices.Add(new myMiDevice(this._directInput, deviceInstance));
+                    Devices.Add(new myMiDevice(deviceInstance));
                 }
                 foreach (var inputDevice in Devices)
                 {
                     var deviceReference = (myMiDevice)inputDevice;
-                    if (deviceInstances.All(d => d.InstanceGuid != deviceReference.Device.InstanceGuid))
+                    if (compatibleDevices.All(d => d.Path != deviceReference.DeviceInfo.Path))
                     {
                         Devices.Remove(deviceReference);
                     }
@@ -67,36 +69,45 @@ namespace _Mi_Controller_Input
 
         public class myMiDevice : InputDevice
         {
-            internal DeviceInstance Device;
-
-            private readonly Joystick _gamepad;
-
-            //private DirectInput directInput;
+            internal HIDDev Device;
+            internal HIDInfo DeviceInfo;
 
 
             private readonly Thread _poolingThread;
 
             private bool _stopThread;
-            //internal UserIndex ControllerID;
             internal Midevice DeviceWrapper;
-            //Controller controller;
 
-            public myMiDevice(DirectInput directInput, DeviceInstance device)
+            public myMiDevice(HIDInfo deviceInstance)
             {
-                //base.StatusIcon = Extensions.ToImageSource(Resources.GenericGamepad);
-                //this.directInput = directInput;
-                this.Device = device;
+                this.DeviceInfo = deviceInstance;
+                this.Device = new HIDDev();
+                /* connect */
+                Device.Open(DeviceInfo, isExclusive: true);
                 this.DeviceWrapper = new Midevice();
-                this._gamepad = new Joystick(directInput, device.InstanceGuid);
-                base.DeviceName = _gamepad.Information.ProductName;
-                this._gamepad.Acquire();
-                foreach (var @object in
-                    this._gamepad.GetObjects()
-                    .Where(@object => (@object.ObjectType & ObjectDeviceType.Axis) != ObjectDeviceType.All))
-                {
-                    this._gamepad.GetObjectPropertiesById((int)@object.ObjectType).SetRange(-1000, 1000);
-                }
+                base.DeviceName = DeviceInfo.Product + " (" + DeviceInfo.SerialNumber + ")";
 
+                AddChannels();
+
+                this._poolingThread = new Thread(ListenerThread);
+                this._poolingThread.Start();
+            }
+
+            private void AddChannels()
+            {
+                AddInputChannels();
+
+                AddOutputChannels();
+            }
+
+            private void AddOutputChannels()
+            {
+                OutputChannels.Add(DeviceWrapper.SmallRumble);
+                OutputChannels.Add(DeviceWrapper.BigRumble);
+            }
+
+            private void AddInputChannels()
+            {
                 InputChannels.Add(DeviceWrapper.LSx);
                 InputChannels.Add(DeviceWrapper.LSy);
                 InputChannels.Add(DeviceWrapper.RSx);
@@ -124,54 +135,66 @@ namespace _Mi_Controller_Input
 
                 InputChannels.Add(DeviceWrapper.Start);
                 InputChannels.Add(DeviceWrapper.Back);
-
-                OutputChannels.Add(DeviceWrapper.SmallRumble);
-                OutputChannels.Add(DeviceWrapper.BigRumble);
-                this._poolingThread = new Thread(ListenerThread);
-                this._poolingThread.Start();
+                InputChannels.Add(DeviceWrapper.Mi);
             }
+
 
             protected override void Dispose(bool disposing)
             {
                 this._stopThread = true;
                 this._poolingThread?.Abort();
-                this._gamepad.Unacquire();
+                Device.Dispose();
                 base.Dispose(disposing);
             }
 
             public void ListenerThread()
             {
+                byte[] currentState = new byte[21];
                 while (!this._stopThread && !Global.IsShuttingDown)
                 {
                     Thread.Sleep(2);
-                    var currentState = this._gamepad.GetCurrentState();
-                    DeviceWrapper.LSx.Value = currentState.X / 1000f;
-                    DeviceWrapper.LSy.Value = currentState.Y / 1000f;
-                    DeviceWrapper.RSx.Value = currentState.Z / 1000f;
-                    DeviceWrapper.RSy.Value = currentState.RotationZ / 1000f;
-                    DeviceWrapper.A.Value = currentState.IsPressed(0);
-                    DeviceWrapper.B.Value = currentState.IsPressed(1);
-                    DeviceWrapper.X.Value = currentState.IsPressed(3);
-                    DeviceWrapper.Y.Value = currentState.IsPressed(4);
-                    DeviceWrapper.Back.Value = currentState.IsPressed(10);
-                    DeviceWrapper.Start.Value = currentState.IsPressed(11);
-                    DeviceWrapper.L1.Value = currentState.IsPressed(6);
-                    DeviceWrapper.R1.Value = currentState.IsPressed(7);
-                    DeviceWrapper.L2Digital.Value = currentState.IsPressed(8);
-                    DeviceWrapper.R2Digital.Value = currentState.IsPressed(9);
-                    DeviceWrapper.LS.Value = currentState.IsPressed(13);
-                    DeviceWrapper.RS.Value = currentState.IsPressed(14);
-                    var pov = currentState.GetPointOfViewControllers()[0];
-                    DeviceWrapper.DUp.Value = 0 <= pov && pov <= 4500 || 31500 <= pov;
-                    DeviceWrapper.DDown.Value = 13500 <= pov && pov <= 22500;
-                    DeviceWrapper.DLeft.Value = 22500 <= pov && pov <= 31500;
-                    DeviceWrapper.DRight.Value = 4500 <= pov && pov <= 13500;
-
-                    var vibe = new Vibration
+                    Device.Read(currentState);
+                    DeviceWrapper.LSx.Value = Math.Max(-127.0, currentState[5] - 128) / 127;
+                    DeviceWrapper.LSy.Value = Math.Max(-127.0, currentState[6] - 128) / 127;
+                    DeviceWrapper.RSx.Value = Math.Max(-127.0, currentState[7] - 128) / 127;
+                    DeviceWrapper.RSy.Value = Math.Max(-127.0, currentState[8] - 128) / 127;
+                    DeviceWrapper.L2.Value = Math.Max(-127.0, currentState[11] - 128) / 127;
+                    DeviceWrapper.R2.Value = Math.Max(-127.0, currentState[12] - 128) / 127;
+                    DeviceWrapper.A.Value = (currentState[1] & Convert.ToByte(1)) != 0;
+                    DeviceWrapper.B.Value = (currentState[1] & Convert.ToByte(2)) != 0;
+                    DeviceWrapper.X.Value = (currentState[1] & Convert.ToByte(8)) != 0;
+                    DeviceWrapper.Y.Value = (currentState[1] & Convert.ToByte(16)) != 0;
+                    DeviceWrapper.Mi.Value = (currentState[20] & Convert.ToByte(1)) != 0;
+                    if (DeviceWrapper.Mi.Value)
                     {
-                        LeftMotorSpeed = (ushort)DeviceWrapper.SmallRumble.Value,
-                        RightMotorSpeed = (ushort)DeviceWrapper.BigRumble.Value
-                    };
+                        Thread.Sleep(250);
+                    }
+                    DeviceWrapper.Back.Value = (currentState[2] & Convert.ToByte(4)) != 0;
+                    DeviceWrapper.Start.Value = (currentState[2] & Convert.ToByte(8)) != 0;
+                    DeviceWrapper.L1.Value = (currentState[1] & Convert.ToByte(64)) != 0;
+                    DeviceWrapper.R1.Value = (currentState[1] & Convert.ToByte(128)) != 0;
+                    DeviceWrapper.L2Digital.Value = (currentState[2] & Convert.ToByte(1)) != 0;
+                    DeviceWrapper.R2Digital.Value = (currentState[2] & Convert.ToByte(2)) != 0;
+                    DeviceWrapper.LS.Value = (currentState[2] & Convert.ToByte(32)) != 0;
+                    DeviceWrapper.RS.Value = (currentState[2] & Convert.ToByte(64)) != 0;
+                    var dpad = currentState[4];
+                    if (dpad == Convert.ToByte(15))
+                    {
+                        DeviceWrapper.DUp.Value = DeviceWrapper.DLeft.Value = DeviceWrapper.DRight.Value = DeviceWrapper.DDown.Value = false;
+                    }
+                    else
+                    {
+                        DeviceWrapper.DUp.Value = currentState[4] == 0 || currentState[4] == Convert.ToByte(1) || currentState[4] == Convert.ToByte(7);
+                        DeviceWrapper.DRight.Value = currentState[4] == Convert.ToByte(2) || currentState[4] == Convert.ToByte(1) || currentState[4] == Convert.ToByte(3);
+                        DeviceWrapper.DDown.Value = currentState[4] == Convert.ToByte(4) || currentState[4] == Convert.ToByte(3) || currentState[4] == Convert.ToByte(5);
+                        DeviceWrapper.DLeft.Value = currentState[4] == Convert.ToByte(6) || currentState[4] == Convert.ToByte(5) || currentState[4] == Convert.ToByte(7);
+                    }
+
+                    //var vibe = new Vibration
+                    //{
+                    //    LeftMotorSpeed = (ushort)DeviceWrapper.SmallRumble.Value,
+                    //    RightMotorSpeed = (ushort)DeviceWrapper.BigRumble.Value
+                    //};
                 }
             }
         }
@@ -206,7 +229,7 @@ namespace _Mi_Controller_Input
 
         public InputChannelTypes.Button Start { get; set; }
         public InputChannelTypes.Button Back { get; set; }
-        public InputChannelTypes.Button Guide { get; set; }
+        public InputChannelTypes.Button Mi { get; set; }
 
         public OutputChannelTypes.RumbleMotor BigRumble { get; set; }
         public OutputChannelTypes.RumbleMotor SmallRumble { get; set; }
@@ -221,12 +244,12 @@ namespace _Mi_Controller_Input
             LS = new InputChannelTypes.Button("Left Stick", "");//, Properties.Resources._360_Left_Stick.ToImageSource());
             RS = new InputChannelTypes.Button("Right Stick", "");//, Properties.Resources._360_Right_Stick.ToImageSource());
 
-            L2 = new InputChannelTypes.JoyAxis("Left Trigger (Analog)", "");//, Properties.Resources._360_LT.ToImageSource()) { min_Value = 0 };
-            R2 = new InputChannelTypes.JoyAxis("Right Trigger (Analog)", "");//, Properties.Resources._360_RT.ToImageSource()) { min_Value = 0 };
-            L1 = new InputChannelTypes.Button("Left Bumper", "");//, Properties.Resources._360_LB.ToImageSource());
-            R1 = new InputChannelTypes.Button("Right Bumper", "");//, Properties.Resources._360_RB.ToImageSource());
-            L2Digital = new InputChannelTypes.Button("Left Trigger (Digital)", "");//, Properties.Resources._360_LB.ToImageSource());
-            R2Digital = new InputChannelTypes.Button("Right Trigger (Digital)", "");//, Properties.Resources._360_RB.ToImageSource());
+            L2 = new InputChannelTypes.JoyAxis("L2 (Analog)", "");//, Properties.Resources._360_LT.ToImageSource()) { min_Value = 0 };
+            R2 = new InputChannelTypes.JoyAxis("R2 (Analog)", "");//, Properties.Resources._360_RT.ToImageSource()) { min_Value = 0 };
+            L1 = new InputChannelTypes.Button("L1", "");//, Properties.Resources._360_LB.ToImageSource());
+            R1 = new InputChannelTypes.Button("R1", "");//, Properties.Resources._360_RB.ToImageSource());
+            L2Digital = new InputChannelTypes.Button("L2 (Digital)", "");//, Properties.Resources._360_LB.ToImageSource());
+            R2Digital = new InputChannelTypes.Button("R2 (Digital)", "");//, Properties.Resources._360_RB.ToImageSource());
 
             DUp = new InputChannelTypes.Button("DPad Up", "");//, Properties.Resources._360_Dpad_Up.ToImageSource());
             DDown = new InputChannelTypes.Button("DPad Down", "");//, Properties.Resources._360_Dpad_Down.ToImageSource());
@@ -238,9 +261,9 @@ namespace _Mi_Controller_Input
             X = new InputChannelTypes.Button("X", "");//, Properties.Resources._360_X.ToImageSource());
             Y = new InputChannelTypes.Button("Y", "");//, Properties.Resources._360_Y.ToImageSource());
 
-            Start = new InputChannelTypes.Button("Start", "");//, Properties.Resources._360_Start.ToImageSource());
+            Start = new InputChannelTypes.Button("Menu", "");//, Properties.Resources._360_Start.ToImageSource());
             Back = new InputChannelTypes.Button("Back", "");//, Properties.Resources._360_Back.ToImageSource());
-            Guide = new InputChannelTypes.Button("Guide", "");//, Properties.Resources._360_Guide.ToImageSource());
+            Mi = new InputChannelTypes.Button("Mi", "");//, Properties.Resources._360_Guide.ToImageSource());
 
             BigRumble = new OutputChannelTypes.RumbleMotor("Big Rumble", "");
             SmallRumble = new OutputChannelTypes.RumbleMotor("Small Rumble", "");
