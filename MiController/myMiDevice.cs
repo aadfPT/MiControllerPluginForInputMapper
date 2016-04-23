@@ -111,7 +111,7 @@ namespace MiController
                     DeviceWrapper.A.Value = (currentState[1] & 1) != 0;
                     DeviceWrapper.B.Value = (currentState[1] & 2) != 0;
                     DeviceWrapper.X.Value = (currentState[1] & 8) != 0;
-                    DeviceWrapper.Y.Value = (currentState[1] & 1) != 0;
+                    DeviceWrapper.Y.Value = (currentState[1] & 16) != 0;
                     var miValue = (currentState[20] & 1) != 0;
                     DeviceWrapper.Mi.Value = miValue;
                     if (miValue)

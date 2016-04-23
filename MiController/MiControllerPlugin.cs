@@ -12,7 +12,7 @@ namespace MiController
     [PluginInfo(
         PluginName = "Mi Controller",
         PluginDescription = "Adds support for the Mi Controller",
-        PluginVersion = "1.0.0.1",
+        PluginVersion = "1.0.0.2",
         PluginID = 56,
         PluginAuthorName = "André Ferreira",
         PluginAuthorEmail = "aadf.pt [at] gmail [dot] com",
