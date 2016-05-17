@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -19,24 +20,27 @@ namespace MiController
 
         private byte[] Vibration { get; } = { 0x20, 0x00, 0x00 };
         private bool StopThread { get; set; }
+        private bool AccelerometerEnabled { get; set; }
 
         public MyMiDevice(HidDevice deviceInstance)
         {
             this.Device = deviceInstance;
-            Device.OpenDevice(DeviceMode.NonOverlapped, DeviceMode.NonOverlapped, ShareMode.ShareWrite | ShareMode.ShareRead);
+            Device.OpenDevice(DeviceMode.NonOverlapped, DeviceMode.NonOverlapped, ShareMode.Exclusive);
             this.DeviceWrapper = new Midevice();
+            DeviceWrapper.ControlAccelerometer.PropertyChanged +=
+                (sender, args) => AccelerometerEnabled = 0 != DeviceWrapper.ControlAccelerometer.Value;
             byte[] serialNumber;
             byte[] product;
             Device.ReadSerialNumber(out serialNumber);
             Device.ReadProduct(out product);
             base.DeviceName = Regex.Replace(Encoding.UTF8.GetString(product), "[^-a-zA-Z0-9 ]", String.Empty)
                               + " (" + Regex.Replace(Encoding.UTF8.GetString(serialNumber), "[^-a-zA-Z0-9 ]", String.Empty) + ")";
-
             AddChannels();
             InputPoolingThread = new Thread(InputListenerThread);
             InputPoolingThread.Start();
             OutputThread = new Thread(OutputVibration);
             OutputThread.Start();
+            ToggleAccelerometer();
         }
 
         private void AddChannels()
@@ -48,40 +52,45 @@ namespace MiController
 
         private void AddOutputChannels()
         {
-            OutputChannels.Add(DeviceWrapper.SmallRumble);
-            OutputChannels.Add(DeviceWrapper.BigRumble);
+            Channels.Add(DeviceWrapper.SmallRumble);
+            Channels.Add(DeviceWrapper.BigRumble);
+            Channels.Add(DeviceWrapper.ControlAccelerometer);
         }
 
         private void AddInputChannels()
         {
-            InputChannels.Add(DeviceWrapper.LSx);
-            InputChannels.Add(DeviceWrapper.LSy);
-            InputChannels.Add(DeviceWrapper.RSx);
-            InputChannels.Add(DeviceWrapper.RSy);
+            Channels.Add(DeviceWrapper.LSx);
+            Channels.Add(DeviceWrapper.LSy);
+            Channels.Add(DeviceWrapper.RSx);
+            Channels.Add(DeviceWrapper.RSy);
 
-            InputChannels.Add(DeviceWrapper.LS);
-            InputChannels.Add(DeviceWrapper.RS);
+            Channels.Add(DeviceWrapper.LS);
+            Channels.Add(DeviceWrapper.RS);
 
-            InputChannels.Add(DeviceWrapper.L1);
-            InputChannels.Add(DeviceWrapper.R1);
-            InputChannels.Add(DeviceWrapper.L2);
-            InputChannels.Add(DeviceWrapper.R2);
-            InputChannels.Add(DeviceWrapper.L2Digital);
-            InputChannels.Add(DeviceWrapper.R2Digital);
+            Channels.Add(DeviceWrapper.L1);
+            Channels.Add(DeviceWrapper.R1);
+            Channels.Add(DeviceWrapper.L2);
+            Channels.Add(DeviceWrapper.R2);
+            Channels.Add(DeviceWrapper.L2Digital);
+            Channels.Add(DeviceWrapper.R2Digital);
 
-            InputChannels.Add(DeviceWrapper.DUp);
-            InputChannels.Add(DeviceWrapper.DDown);
-            InputChannels.Add(DeviceWrapper.DLeft);
-            InputChannels.Add(DeviceWrapper.DRight);
+            Channels.Add(DeviceWrapper.DUp);
+            Channels.Add(DeviceWrapper.DDown);
+            Channels.Add(DeviceWrapper.DLeft);
+            Channels.Add(DeviceWrapper.DRight);
 
-            InputChannels.Add(DeviceWrapper.A);
-            InputChannels.Add(DeviceWrapper.B);
-            InputChannels.Add(DeviceWrapper.X);
-            InputChannels.Add(DeviceWrapper.Y);
+            Channels.Add(DeviceWrapper.A);
+            Channels.Add(DeviceWrapper.B);
+            Channels.Add(DeviceWrapper.X);
+            Channels.Add(DeviceWrapper.Y);
 
-            InputChannels.Add(DeviceWrapper.Start);
-            InputChannels.Add(DeviceWrapper.Back);
-            InputChannels.Add(DeviceWrapper.Mi);
+            Channels.Add(DeviceWrapper.Start);
+            Channels.Add(DeviceWrapper.Back);
+            Channels.Add(DeviceWrapper.Mi);
+            Channels.Add(DeviceWrapper.BatteryLevel);
+            Channels.Add(DeviceWrapper.GX);
+            Channels.Add(DeviceWrapper.GY);
+            Channels.Add(DeviceWrapper.GZ);
         }
 
 
@@ -90,6 +99,7 @@ namespace MiController
             StopThread = true;
             InputPoolingThread?.Abort();
             OutputThread?.Abort();
+            Device.CloseDevice();
             Device.Dispose();
             base.Dispose(disposing);
         }
@@ -147,6 +157,17 @@ namespace MiController
                                                     currentState[4] == 5 ||
                                                     currentState[4] == 7;
                     }
+                    DeviceWrapper.BatteryLevel.Value = Convert.ToDouble(currentState[19]) / 255;
+
+                    //Accelerometer
+                    DeviceWrapper.GX.Value = currentState[13];
+                    DeviceWrapper.GY.Value = currentState[14];
+                    DeviceWrapper.GZ.Value = currentState[18];
+                    Debug.WriteLine("DX:" + Convert.ToInt32(currentState[13]) + " " + Convert.ToInt32(currentState[14])
+                                    + " DY:" + Convert.ToInt32(currentState[15]) + " " +
+                                    Convert.ToInt32(currentState[16])
+                                    + " DZ:" + Convert.ToInt32(currentState[17]) + " " +
+                                    Convert.ToInt32(currentState[18]));
                 }
                 catch (Exception)
                 {
@@ -176,6 +197,24 @@ namespace MiController
                     }
                 }
                 Thread.Sleep(100);
+            }
+        }
+        private void ToggleAccelerometer()
+        {
+            var headerByte = Convert.ToByte(0x31);
+            var controlByte = Convert.ToByte(0x01);
+            var sensibilityByte = Convert.ToByte(0x08);
+            var data = new byte[21];
+            data[0] = headerByte;
+            data[1] = controlByte;
+            data[2] = sensibilityByte;
+            try
+            {
+                Device.WriteFeatureData(data);
+            }
+            catch (Exception)
+            {
+                //ignore exceptions
             }
         }
 

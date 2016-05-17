@@ -35,7 +35,6 @@
   <ItemGroup>
     <Reference Include="ODIF">
       <HintPath>..\references\ODIF.dll</HintPath>
-      <Private>False</Private>
     </Reference>
     <Reference Include="PresentationCore" />
     <Reference Include="System" />

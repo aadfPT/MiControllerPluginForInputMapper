@@ -12,7 +12,7 @@ namespace MiController
     [PluginInfo(
         PluginName = "Mi Controller",
         PluginDescription = "Adds support for the Mi Controller",
-        PluginVersion = "1.0.0.2",
+        PluginVersion = "1.0.0.3",
         PluginID = 56,
         PluginAuthorName = "André Ferreira",
         PluginAuthorEmail = "aadf.pt [at] gmail [dot] com",
@@ -36,7 +36,10 @@ namespace MiController
         {
             lock (base.Devices)
             {
-                var compatibleDevices = HidDevices.Enumerate(0x2717, 0x3144).ToList();
+                var compatibleDevices = HidDevices.Enumerate().ToList();
+                compatibleDevices =
+                    compatibleDevices.Where(d => d.Attributes.VendorId == 0x2717 && d.Attributes.ProductId == 0x3144)
+                        .ToList();
                 foreach (var deviceInstance in compatibleDevices)
                 {
                     if (Devices.Any(d => ((MyMiDevice)d).Device.DevicePath == deviceInstance.DevicePath))

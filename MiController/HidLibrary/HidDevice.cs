@@ -17,7 +17,7 @@ namespace HidLibrary
         private readonly HidDeviceCapabilities _deviceCapabilities;
         private DeviceMode _deviceReadMode = DeviceMode.NonOverlapped;
         private DeviceMode _deviceWriteMode = DeviceMode.NonOverlapped;
-        private ShareMode _deviceShareMode = ShareMode.ShareRead | ShareMode.ShareWrite;
+        private ShareMode _deviceShareMode = ShareMode.Exclusive;
 
         private readonly HidDeviceEventMonitor _deviceEventMonitor;
 
@@ -383,7 +383,8 @@ namespace HidLibrary
 
             var buffer = CreateFeatureOutputBuffer();
 
-            Array.Copy(data, 0, buffer, 0, Math.Min(data.Length, _deviceCapabilities.FeatureReportByteLength));
+            var length = Math.Min(data.Length, _deviceCapabilities.FeatureReportByteLength);
+            Array.Copy(data, 0, buffer, 0, length);
 
 
             IntPtr hidHandle = IntPtr.Zero;
@@ -396,7 +397,7 @@ namespace HidLibrary
                     hidHandle = OpenDeviceIO(_devicePath, NativeMethods.ACCESS_NONE);
 
                 //var overlapped = new NativeOverlapped();
-                success = NativeMethods.HidD_SetFeature(hidHandle, buffer, buffer.Length);
+                success = NativeMethods.HidD_SetFeature(hidHandle, buffer, length);
             }
             catch (Exception exception)
             {
@@ -493,14 +494,17 @@ namespace HidLibrary
             return new HidDeviceCapabilities(capabilities);
         }
 
-        private bool WriteData(byte[] data, int timeout)
+        private bool WriteData(byte[] data, int timeout, bool ignoreOutputReportByteLength = false)
         {
-            if (_deviceCapabilities.OutputReportByteLength <= 0) return false;
+            if (!ignoreOutputReportByteLength && _deviceCapabilities.OutputReportByteLength <= 0) return false;
 
-            var buffer = CreateOutputBuffer();
+            var buffer = (ignoreOutputReportByteLength)
+                ? new byte[data.Length] : CreateOutputBuffer();
             uint bytesWritten = 0;
-
-            Array.Copy(data, 0, buffer, 0, Math.Min(data.Length, _deviceCapabilities.OutputReportByteLength));
+            var length = (ignoreOutputReportByteLength)
+                ? data.Length
+                : Math.Min(data.Length, _deviceCapabilities.OutputReportByteLength);
+            Array.Copy(data, 0, buffer, 0, length);
 
             if (_deviceWriteMode == DeviceMode.Overlapped)
             {
@@ -616,7 +620,7 @@ namespace HidLibrary
 
         private static IntPtr OpenDeviceIO(string devicePath, uint deviceAccess)
         {
-            return OpenDeviceIO(devicePath, DeviceMode.NonOverlapped, deviceAccess, ShareMode.ShareRead | ShareMode.ShareWrite);
+            return OpenDeviceIO(devicePath, DeviceMode.NonOverlapped, deviceAccess, ShareMode.Exclusive);
         }
 
         private static IntPtr OpenDeviceIO(string devicePath, DeviceMode deviceMode, uint deviceAccess, ShareMode shareMode)
